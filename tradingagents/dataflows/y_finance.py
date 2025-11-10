@@ -3,7 +3,9 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import yfinance as yf
 import os
+import time
 from .stockstats_utils import StockstatsUtils
+from .constants import HISTORICAL_DATA_YEARS, CACHE_VALIDITY_HOURS
 
 def get_YFin_data_online(
     symbol: Annotated[str, "ticker symbol of the company"],
@@ -218,52 +220,71 @@ def _get_stock_stats_bulk(
         # Online data fetching with caching
         today_date = pd.Timestamp.today()
         curr_date_dt = pd.to_datetime(curr_date)
-        
+
         end_date = today_date
-        start_date = today_date - pd.DateOffset(years=15)
+        start_date = today_date - pd.DateOffset(years=HISTORICAL_DATA_YEARS)
         start_date_str = start_date.strftime("%Y-%m-%d")
         end_date_str = end_date.strftime("%Y-%m-%d")
-        
+
         os.makedirs(config["data_cache_dir"], exist_ok=True)
-        
+
+        # Use static cache filename for better cache reuse
         data_file = os.path.join(
             config["data_cache_dir"],
-            f"{symbol}-YFin-data-{start_date_str}-{end_date_str}.csv",
+            f"{symbol}-YFin-data-cache.csv",
         )
-        
+
+        # Check if cache exists and is still valid
+        cache_valid = False
         if os.path.exists(data_file):
+            cache_age_seconds = time.time() - os.path.getmtime(data_file)
+            cache_age_hours = cache_age_seconds / 3600
+            cache_valid = cache_age_hours < CACHE_VALIDITY_HOURS
+
+        if cache_valid:
+            # Use cached data
             data = pd.read_csv(data_file)
             data["Date"] = pd.to_datetime(data["Date"])
         else:
-            data = yf.download(
-                symbol,
-                start=start_date_str,
-                end=end_date_str,
-                multi_level_index=False,
-                progress=False,
-                auto_adjust=True,
-            )
-            data = data.reset_index()
-            data.to_csv(data_file, index=False)
-        
+            # Fetch fresh data with error handling
+            try:
+                data = yf.download(
+                    symbol,
+                    start=start_date_str,
+                    end=end_date_str,
+                    multi_level_index=False,
+                    progress=False,
+                    auto_adjust=True,
+                )
+
+                if data.empty:
+                    raise Exception(f"No data returned for symbol '{symbol}'")
+
+                data = data.reset_index()
+                data.to_csv(data_file, index=False)
+
+            except Exception as e:
+                # If download fails but we have stale cache, use it with a warning
+                if os.path.exists(data_file):
+                    print(f"Warning: Failed to fetch fresh data ({str(e)}), using stale cache")
+                    data = pd.read_csv(data_file)
+                    data["Date"] = pd.to_datetime(data["Date"])
+                else:
+                    raise Exception(f"Failed to download data for {symbol}: {str(e)}")
+
         df = wrap(data)
         df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")
     
     # Calculate the indicator for all rows at once
     df[indicator]  # This triggers stockstats to calculate the indicator
-    
+
     # Create a dictionary mapping date strings to indicator values
-    result_dict = {}
-    for _, row in df.iterrows():
-        date_str = row["Date"]
-        indicator_value = row[indicator]
-        
-        # Handle NaN/None values
-        if pd.isna(indicator_value):
-            result_dict[date_str] = "N/A"
-        else:
-            result_dict[date_str] = str(indicator_value)
-    
+    # Use vectorized operations for better performance
+    result_dict = dict(zip(
+        df["Date"].astype(str),
+        df[indicator].fillna("N/A").astype(str)
+    ))
+
     return result_dict
 
 
