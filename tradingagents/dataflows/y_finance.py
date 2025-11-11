@@ -5,7 +5,8 @@ import yfinance as yf
 import os
 import time
 from .stockstats_utils import StockstatsUtils
-from .constants import HISTORICAL_DATA_YEARS, CACHE_VALIDITY_HOURS
+from .constants import HISTORICAL_DATA_YEARS, CACHE_VALIDITY_HOURS, CACHE_STATISTICS_ENABLED
+from .cache_manager import get_cache_manager
 
 def get_YFin_data_online(
     symbol: Annotated[str, "ticker symbol of the company"],
@@ -245,7 +246,23 @@ def _get_stock_stats_bulk(
             # Use cached data
             data = pd.read_csv(data_file)
             data["Date"] = pd.to_datetime(data["Date"])
+
+            # Track cache hit
+            if CACHE_STATISTICS_ENABLED:
+                try:
+                    cache_mgr = get_cache_manager()
+                    cache_mgr.stats.record_hit("yfinance")
+                except Exception as e:
+                    print(f"Warning: Failed to record cache hit: {e}")
         else:
+            # Track cache miss
+            if CACHE_STATISTICS_ENABLED:
+                try:
+                    cache_mgr = get_cache_manager()
+                    cache_mgr.stats.record_miss("yfinance")
+                except Exception as e:
+                    print(f"Warning: Failed to record cache miss: {e}")
+
             # Fetch fresh data with error handling
             try:
                 data = yf.download(
@@ -262,6 +279,14 @@ def _get_stock_stats_bulk(
 
                 data = data.reset_index()
                 data.to_csv(data_file, index=False)
+
+                # Track API call
+                if CACHE_STATISTICS_ENABLED:
+                    try:
+                        cache_mgr = get_cache_manager()
+                        cache_mgr.stats.record_api_call("yfinance")
+                    except Exception as e:
+                        print(f"Warning: Failed to record API call: {e}")
 
             except Exception as e:
                 # If download fails but we have stale cache, use it with a warning

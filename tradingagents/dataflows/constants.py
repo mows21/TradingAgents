@@ -13,3 +13,12 @@ HISTORICAL_DATA_YEARS = 15
 # After this period, cached data is considered stale and will be refreshed
 # Used by: Y Finance, Alpha Vantage, and other data vendors
 CACHE_VALIDITY_HOURS = 24
+
+# Cache retention period in hours
+# After this period, cached files are eligible for deletion during cleanup
+# Default: 7 days (7 * 24 = 168 hours)
+CACHE_RETENTION_HOURS = 168
+
+# Enable cache statistics tracking
+# When enabled, tracks cache hit/miss rates and API usage
+CACHE_STATISTICS_ENABLED = True
