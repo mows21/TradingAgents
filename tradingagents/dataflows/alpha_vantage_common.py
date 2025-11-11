@@ -6,7 +6,8 @@ import time
 import hashlib
 from datetime import datetime
 from io import StringIO
-from .constants import CACHE_VALIDITY_HOURS
+from .constants import CACHE_VALIDITY_HOURS, CACHE_STATISTICS_ENABLED
+from .cache_manager import get_cache_manager
 
 API_BASE_URL = "https://www.alphavantage.co/query"
 
@@ -89,10 +90,27 @@ def _make_api_request(function_name: str, params: dict, use_cache: bool = True) 
                 with open(cache_file, 'r', encoding='utf-8') as f:
                     cached_data = f.read()
                 print(f"DEBUG: Using cached Alpha Vantage data for {function_name}")
+
+                # Track cache hit
+                if CACHE_STATISTICS_ENABLED:
+                    try:
+                        cache_mgr = get_cache_manager()
+                        cache_mgr.stats.record_hit("alpha_vantage")
+                    except Exception as e:
+                        print(f"Warning: Failed to record cache hit: {e}")
+
                 return cached_data
             except Exception as e:
                 print(f"Warning: Failed to read cache file: {e}")
                 # Continue to make API request
+
+    # Track cache miss if caching is enabled
+    if use_cache and CACHE_STATISTICS_ENABLED:
+        try:
+            cache_mgr = get_cache_manager()
+            cache_mgr.stats.record_miss("alpha_vantage")
+        except Exception as e:
+            print(f"Warning: Failed to record cache miss: {e}")
 
     # Create a copy of params to avoid modifying the original
     api_params = params.copy()
@@ -116,6 +134,14 @@ def _make_api_request(function_name: str, params: dict, use_cache: bool = True) 
         response = requests.get(API_BASE_URL, params=api_params)
         response.raise_for_status()
         response_text = response.text
+
+        # Track API call
+        if CACHE_STATISTICS_ENABLED:
+            try:
+                cache_mgr = get_cache_manager()
+                cache_mgr.stats.record_api_call("alpha_vantage")
+            except Exception as e:
+                print(f"Warning: Failed to record API call: {e}")
 
         # Check if response is JSON (error responses are typically JSON)
         try:
